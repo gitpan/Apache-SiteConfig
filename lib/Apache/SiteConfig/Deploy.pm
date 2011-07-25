@@ -2,6 +2,7 @@ package Apache::SiteConfig::Deploy;
 use feature ':5.10';
 use warnings;
 use strict;
+use File::Basename qw(dirname);
 use File::Spec;
 use File::Path qw(mkpath rmtree);
 use Apache::SiteConfig::Template;
@@ -27,7 +28,7 @@ sub import {
 
     # setup accessors to main::
     no strict 'refs';
-    for my $key ( qw(su name domain domain_alias webroot source deploy task) ) {
+    for my $key ( qw(su chown name domain domain_alias webroot source deploy task) ) {
         *{ 'main::' . $key } = sub { 
             ${ $class .'::'}{ $key }->( $Single , @_ );
         };
@@ -62,6 +63,11 @@ sub execute_command {
     } else {
         system( $cmd );
     }
+}
+
+sub chown {
+    my $self = shift;
+    $self->{args}->{chown} = $_[0];
 }
 
 sub su {
@@ -190,6 +196,13 @@ sub deploy {
 
     $self->prepare_log_path( $args );
 
+    if( $args->{chown} ) {
+        say "Changing owner to $args->{site_dir}";
+        $self->execute_command( sprintf( 'chown -R %s: ' , $args->{site_dir} ) ,1);
+    }
+    
+
+
     # Default template
     my $template = Apache::SiteConfig::Template->new;  # apache site config template
     my $context = $template->build( 
@@ -224,19 +237,51 @@ sub deploy {
         }
     } 
     else {
-        mkpath [ 'apache2' ];
 
+        # try to find where apachectl is located.
+        my $apachectl_bin = qx(which apachectl);
+        chomp( $apachectl_bin );
 
-        # TODO: run apache configtest here
-        # /opt/local/apache2/bin/apachectl -t -f /path/to/config file
-        my $config_file = File::Spec->join(  'apache2' , 'sites' , $args->{name} );  # apache config
-        mkpath [ File::Spec->join('apache2','sites') ];
+        my $apache_dir = dirname(dirname( $apachectl_bin ));
+        my $apache_conf_dir = File::Spec->join( $apache_dir , 'conf' );
 
-        say "Writing site config file: $config_file";
-        open my $fh , ">", $config_file or die "Can not write config file $config_file: $!";
-        print $fh $config_content;
-        close $fh;
+        if( -e $apache_conf_dir ) {
+            say "Found apache configuration directory: $apache_conf_dir";
+            # prepare site config dir
+            mkpath [ File::Spec->join( $apache_conf_dir , 'sites' ) ];
+
+            my $httpd_conf = File::Spec->join( $apache_conf_dir , 'httpd.conf' );
+
+            # write site config to apache conf dir
+            my $config_file =  File::Spec->join( $apache_conf_dir , 'sites' , $args->{name} . '.conf' );
+            say "Writing config file: $config_file";
+            open my $fh , ">" , $config_file or die $!;
+            print $fh $config_content;
+            close $fh;
+
+            say "Appending Include statement to $httpd_conf";
+            open my $fh2 , ">>" , $httpd_conf or die $!;
+            print $fh2 "###### Apache Site Configurations \n";
+            print $fh2 "Include conf/sites/$args->{name}.conf\n";
+            close $fh2;
+
+        } else {
+            # apachectl not found
+            mkpath [ 'apache2' ];
+
+            # TODO: run apache configtest here
+            # /opt/local/apache2/bin/apachectl -t -f /path/to/config file
+            my $config_file = File::Spec->join(  'apache2' , 'sites' , $args->{name} );  # apache config
+            mkpath [ File::Spec->join('apache2','sites') ];
+
+            say "Writing site config file: $config_file";
+            open my $fh , ">", $config_file or die "Can not write config file $config_file: $!";
+            print $fh $config_content;
+            close $fh;
+        }
+
     }
+
 
 }
 
@@ -257,6 +302,10 @@ Apache::SiteConfig::Deploy
     domain 'foo.com';
 
     domain_alias 'foo.com';
+
+
+    su 'www-data';
+    chown 'www-data';
 
     source git => 'git@git.foo.com:projectA.git';
 

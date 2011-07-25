@@ -1,7 +1,7 @@
 package Apache::SiteConfig;
 use strict;
 use warnings;
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 use Apache::SiteConfig::Statement;
 use Apache::SiteConfig::Section;
 use Apache::SiteConfig::Directive;
